@@ -8,13 +8,26 @@
     
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* Essential styles for the background simulation */
+        #starCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1; /* Puts it behind all other content */
+            background: #050505; /* Matches your theme background */
+        }
+    </style>
 </head>
 <body>
 
+    <canvas id="starCanvas"></canvas>
+
     <div class="cursor"></div>
     <div class="cursor-follower"></div>
-
-    <div id="particles-js"></div>
 
     <div class="preloader">
         <div class="loader-text">INITIALIZING SYSTEMS...</div>
@@ -100,9 +113,155 @@
     </footer>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.7.0/vanilla-tilt.min.js"></script>
     
     <script src="script.js"></script>
+
+    <script>
+        (function() {
+            let mouseDown = false;
+
+            window.addEventListener("mousedown", () => mouseDown = true);
+            window.addEventListener("mouseup",   () => mouseDown = false);
+
+            const canvas = document.getElementById('starCanvas');
+            const ctx = canvas.getContext('2d');
+
+            let w = canvas.width = window.innerWidth;
+            let h = canvas.height = window.innerHeight;
+
+            window.addEventListener('resize', () => {
+                w = canvas.width = window.innerWidth;
+                h = canvas.height = window.innerHeight;
+            });
+
+            // Wrapped distance (torus metric)
+            function wrappedDistance(ax, ay, bx, by) {
+                let dx = Math.abs(ax - bx);
+                let dy = Math.abs(ay - by);
+
+                if (dx > w / 2) dx = w - dx;
+                if (dy > h / 2) dy = h - dy;
+
+                return Math.sqrt(dx*dx + dy*dy);
+            }
+
+            // Compute wrapped midpoint
+            function wrappedLine(a, b) {
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+
+                if (Math.abs(dx) > w / 2) dx -= Math.sign(dx) * w;
+                if (Math.abs(dy) > h / 2) dy -= Math.sign(dy) * h;
+
+                return { x2: a.x + dx, y2: a.y + dy };
+            }
+
+            // Mouse velocity tracking
+            let prevMouse = { x: null, y: null };
+            let mouseVel = { x: 0, y: 0 };
+
+            window.addEventListener('mousemove', e => {
+                if (prevMouse.x !== null) {
+                    mouseVel.x = e.clientX - prevMouse.x;
+                    mouseVel.y = e.clientY - prevMouse.y;
+                }
+                prevMouse.x = e.clientX;
+                prevMouse.y = e.clientY;
+            });
+
+            function dampenMouseVelocity() {
+                mouseVel.x *= 0.5;
+                mouseVel.y *= 0.5;
+            }
+
+            // Particles
+            const STAR_COUNT = 300; // Adjusted count for better performance with overlay
+            const MAX_DIST = 130;
+
+            function rand(min, max) {
+                return Math.random() * (max - min) + min;
+            }
+
+            const stars = [];
+
+            function createStar() {
+                const parallax = rand(0.3, 1.5);
+                return {
+                    x: rand(0, w),
+                    y: rand(0, h),
+                    vx: rand(-0.2, 0.2),
+                    vy: rand(-0.2, 0.2),
+                    baseVx: rand(-0.25, 0.25),
+                    baseVy: rand(-0.25, 0.25),
+                    parallax,
+                    size: parallax * rand(1, 2), // Slightly smaller stars for elegance
+                };
+            }
+
+            for (let i = 0; i < STAR_COUNT; i++) stars.push(createStar());
+
+            // Animation loop
+            function animate() {
+                ctx.clearRect(0, 0, w, h);
+                dampenMouseVelocity();
+
+                for (let star of stars) {
+                    const dist = wrappedDistance(star.x, star.y, prevMouse.x || 0, prevMouse.y || 0);
+                    const influence = mouseDown ? 800 : 400;
+                    const strength = Math.max(0, 1 - dist / influence);
+                    const boost = mouseDown ? 10 : 1;
+
+                    star.vx += mouseVel.x * 0.01 * strength * star.parallax * boost;
+                    star.vy += mouseVel.y * 0.01 * strength * star.parallax * boost;
+
+                    star.x += (star.vx + star.baseVx) * star.parallax;
+                    star.y += (star.vy + star.baseVy) * star.parallax;
+
+                    star.vx *= 0.99;
+                    star.vy *= 0.99;
+
+                    if (star.x < 0) star.x += w;
+                    if (star.x >= w) star.x -= w;
+                    if (star.y < 0) star.y += h;
+                    if (star.y >= h) star.y -= h;
+
+                    // Draw star
+                    ctx.save();
+                    // Using cyan/purple hues to match your site theme
+                    ctx.shadowColor = `hsla(${180 + star.vx*15}, 100%, 60%, 0.9)`; 
+                    ctx.shadowBlur = Math.max(star.size * 2, 10);
+                    ctx.fillStyle = `hsl(${180 + star.vx*15}, 100%, 70%)`;
+
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Draw lines
+                ctx.lineWidth = 0.5;
+                for (let i = 0; i < stars.length; i++) {
+                    for (let j = i + 1; j < stars.length; j++) {
+                        const a = stars[i];
+                        const b = stars[j];
+                        const dist = wrappedDistance(a.x, a.y, b.x, b.y);
+                        
+                        if (dist < MAX_DIST) {
+                            // Fades line to transparent
+                            ctx.strokeStyle = `rgba(0, 243, 255, ${0.15 * (1 - dist / MAX_DIST)})`; 
+                            const { x2, y2 } = wrappedLine(a, b);
+                            ctx.beginPath();
+                            ctx.moveTo(a.x, a.y);
+                            ctx.lineTo(x2, y2);
+                            ctx.stroke();
+                        }
+                    }
+                }
+                requestAnimationFrame(animate);
+            }
+            animate();
+        })();
+    </script>
 </body>
 </html>
